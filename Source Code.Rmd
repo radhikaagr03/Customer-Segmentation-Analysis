@@ -1,0 +1,500 @@
+---
+title: "Final Project Code"
+author: "Ayesha Mulla, Harshwardhan Patil, Radhika Agarwal"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(DescTools)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(vcd)
+library(FactoMineR)
+library(ggpubr)
+library(factoextra)
+library(psych)
+library(corrplot)
+library(GGally)
+library("ggpubr")
+library(cluster)
+library(caret)
+
+# install.packages("reshape2")
+library(reshape2)
+```
+
+## Read the data
+
+```{r }
+data <- read.table("Company-data.csv", sep ='\t',header = T)
+head(data)
+```
+
+## Produce summary of the data
+
+```{r}
+summary(data)
+```
+We can observe that "Income" variable has 24 NA values. 
+
+```{r}
+data <- na.omit(data)
+```
+
+
+# Feature Engineering 
+
+```{r}
+# Tenure
+data$Dt_Customer <- as.Date(data$Dt_Customer, format= "%d-%m-%Y")
+days <- as.numeric(max(data$Dt_Customer) - data$Dt_Customer)
+data$Tenure <- days
+data$Tenure <- as.numeric(data$Tenure, errors="coerce")
+
+# Age
+data$Age <- 2014 - data$Year_Birth
+
+# Spending
+data$Spendings <- data$MntWines + data$MntFruits + data$MntMeatProducts + data$MntFishProducts +data$MntSweetProducts + data$MntGoldProds
+
+# Wines
+data$Wines <- data$MntWines
+
+# Fruits
+data$Fruits <- data$MntFruits
+
+# Meat
+data$Meat <- data$MntMeatProducts
+
+# Fish
+data$Fish <- data$MntFishProducts
+
+# Sweets
+data$Sweets <- data$MntSweetProducts
+
+# Gold
+data$Gold <- data$MntGoldProds
+
+# Relationship Status
+data$RelationshipStatus <- ifelse(data$Marital_Status == "Married" | data$Marital_Status == "Together", "Couple",
+ifelse(data$Marital_Status %in% c("Absurd", "YOLO", "Single","Alone"), "Single",
+ifelse(data$Marital_Status %in% c("Widow"), "Widow", 
+ifelse(data$Marital_Status %in% c("Divorced"), "Divorced", ""))))
+
+data$RelStatus <- as.numeric(ifelse(data$RelationshipStatus == "Single", 1,
+                         ifelse(data$RelationshipStatus == "Couple", 2,
+                                ifelse(data$RelationshipStatus == "Widow", 3,
+                                       ifelse(data$RelationshipStatus == "Divorced", 4, 0)))))
+
+
+# Children
+data$Children <- data$Kidhome + data$Teenhome
+
+# Parent
+data$Parent <- ifelse(data$Children > 0, 1, 0)
+
+# Education 
+data$Education <- ifelse(data$Education %in% c("Basic", "2n Cycle"), "Undergraduate",
+                        ifelse(data$Education == "Graduation", "Graduate",
+                                ifelse(data$Education %in% c("Master", "PhD"), "Postgraduate", "")))
+
+data$LevEd <- as.numeric(ifelse(data$Education == "Undergraduate",1,
+                             ifelse(data$Education == "Graduate", 2,
+                                ifelse(data$Education == "Postgraduate", 3, 0))))
+
+# Campaign
+data$Campaign <- data$AcceptedCmp1 + data$AcceptedCmp2 + data$AcceptedCmp3 + data$AcceptedCmp4 + data$AcceptedCmp5
+
+# Purchases
+data$Purchases <- data$NumDealsPurchases + data$NumWebPurchases + data$NumCatalogPurchases + data$NumStorePurchases
+
+# Change names of different variables for simplicity
+data$WebVisits <- data$NumWebVisitsMonth
+data$Web <- data$NumWebPurchases
+data$Deal<- data$NumDealsPurchases
+data$Catalog <- data$NumCatalogPurchases
+data$Store <- data$NumStorePurchases
+
+# Widow or Not
+data$widow = ifelse(data$RelStatus==3,1,0)
+
+```
+
+```{r}
+# Remove data of customers having age greater than 80
+data$Age <- ifelse(data$Age > 80, NA, data$Age)
+data <- na.omit(data)
+```
+
+```{r}
+# Remove data of customers having income greater than 170000
+data$Income <- ifelse(data$Income > 170000, NA, data$Income)
+data <- na.omit(data)
+```
+
+Drop unnecessary features from the data
+
+```{r}
+to_drop <- c("Marital_Status", "NumDealsPurchases", "NumWebPurchases", "NumCatalogPurchases", "NumStorePurchases", "NumWebVisitsMonth", "MntWines","MntFruits","MntMeatProducts","MntFishProducts","MntSweetProducts","MntGoldProds","AcceptedCmp1","AcceptedCmp2", "AcceptedCmp3", "AcceptedCmp4", "AcceptedCmp5","Z_CostContact", "Z_Revenue", "Year_Birth", "ID","Teenhome","Kidhome")
+data <- data[, !(names(data) %in% to_drop)]
+```
+
+```{r}
+# Drop categorial variables to create a numerical data frame 
+drop <- c("Education", "RelationshipStatus")
+data_numerical <- data[,!(names(data) %in% drop)]
+```
+
+# Exploratory Data Analysis
+
+```{r}
+options(repr.plot.width=30, repr.plot.height=8) 
+require(gridExtra)
+
+income_spendings_education_plot <- ggplot(data, aes(x=Spendings,y=Income,fill=Education)) +
+geom_boxplot(outlier.colour="#0B2447", outlier.shape=16,outlier.size=2, notch=T)  
+
+income_purchases_education_plot <- ggplot(data, aes(x=Purchases,y=Income,fill=Education)) +
+geom_boxplot(outlier.colour="#0B2447", outlier.shape=16,outlier.size=2, notch=T) 
+
+purchases_hist <- ggplot(data, aes(x=Purchases, fill=Education)) + 
+  geom_histogram(color="black", bins = 30) 
+
+income_hist <- ggplot(data, aes(x=Income, fill=Education)) + 
+  geom_histogram(color="black", bins = 30) 
+
+grid.arrange(income_spendings_education_plot, income_purchases_education_plot, purchases_hist, income_hist, ncol=2, nrow=2)
+```
+
+
+```{r}
+df_tidy <- data %>% 
+  gather(key = "product", value = "amount", Wines:Gold)
+```
+
+
+```{r}
+
+df_tidy <- df_tidy %>% 
+  mutate(age_group = cut(as.numeric(Age), breaks = c(25, 35, 45, 55, 65, 80),
+                    labels = c("Below 35", "35-45", "46-55", "56-65", "66-75")))
+data <- data %>% 
+  mutate(age_group = cut(as.numeric(Age), breaks = c(25, 35, 45, 55, 65, 80),
+                    labels = c("Below 35", "35-45", "46-55", "56-65", "66-75")))
+T1 <- data %>%
+  mutate(total_amount_spent = Wines+Fruits+Meat+Fish+Sweets+Gold) %>%
+  filter (Income < 3e+05)
+```
+
+```{r}
+colnames(T1)[colnames(T1) == "age_group"] ="Age Group"
+colnames(T1)[colnames(T1) == "total_amount_spent"] ="Total Amount Spent"
+```
+
+```{r}
+data<-na.omit(data)
+```
+
+
+```{r}
+# Scatter plot colored by groups ("Species")
+sp <- ggscatter(T1, x = "Income", y = "Total Amount Spent",
+                color = "Age Group",
+                size = 3, alpha = 0.6)+
+  border()+ theme_bw()
+                                         
+# Marginal density plot of x (top panel) and y (right panel)
+xplot <- ggdensity(T1, "Income", fill = "Age Group")+ theme_bw()
+
+yplot <- ggdensity(T1, "Total Amount Spent", fill = "Age Group")+
+  rotate()+ theme_bw()
+
+# Cleaning the plots
+yplot <- yplot + clean_theme() 
+xplot <- xplot + clean_theme()
+
+# Give a suitable title to the plot
+title <- ggtitle("Relationship between Income and Total Amount Spent by Age Group")
+
+# Arranging the plot
+ggarrange(xplot, NULL, sp, yplot, 
+          ncol = 2, nrow = 2,  align = "hv", 
+          widths = c(2, 1), heights = c(1, 2),
+          common.legend = TRUE)+ theme_bw() +theme_bw()+title
+```
+
+
+```{r}
+total_age = aggregate(amount ~ product+age_group, data = df_tidy, mean)
+
+total_age%>%
+ggplot( aes(x = age_group, y = amount, fill = product)) +
+  geom_bar(stat = "identity", position = "dodge")  +
+    scale_fill_brewer(palette = "Set1") +
+  labs( title="Average Amount of Goods Purchased by Age Group and Product", hjust = 0, x = "Customer's Age", y = "Average Amount of Goods Purchased")+theme_bw()
+```
+
+
+```{r}
+total_amount = aggregate(amount ~ product+Education, data = df_tidy, mean)
+
+total_amount%>%
+ggplot( aes(x = amount, y = product, fill = Education)) +
+  geom_bar(stat = "identity", position = "dodge")  +
+    scale_fill_brewer(palette = "Set1") +
+  labs( title="Average amount spent on product types based on Customer's Education Level", hjust = 0, x = "Average Amount of Goods Purchased", y = "Product")+theme_bw()
+```
+
+
+```{r}
+total_relation = aggregate(amount ~ product+RelationshipStatus, data = df_tidy, mean)
+
+total_relation%>%
+ggplot( aes(x = amount, y = product, fill = RelationshipStatus)) +
+  geom_bar(stat = "identity", position = "dodge")  +
+  scale_fill_brewer(palette = "Set1") +
+  labs( title="Average amount spent on product types based on Customer's Relationship Status", hjust = 0, x = "Average Amount of Goods Purchased", y = "Product",fill="Relationship Status")+theme_bw()
+```
+
+```{r}
+df_Education <- df_tidy %>% 
+    gather(key = "Channel", value = "Purchases", Deal, Web, Catalog, Store)%>% group_by(Education, Channel)
+
+df_Education = aggregate(Purchases ~ Channel+Education, data = df_Education, mean)
+
+df_Education <- df_Education%>%
+    mutate(Percentage = Purchases/sum(Purchases)*100)
+
+df_Education %>% 
+  ggplot(aes(x=Education, y=Percentage, fill=Channel)) +
+  geom_col(position="stack", color="black", width=0.65, size=0.3) +
+  scale_fill_brewer(palette="Set3") +
+  labs(x="Education", y="Percentage", title="Percentage of Channel Usage for purchases based on Customer's Education Level") +
+  theme_classic()+geom_text(aes(label=paste(round(Percentage,2),"%")), position=position_stack(vjust=0.5), size=3, color="black")
+```
+
+```{r}
+df_RelationshipStatus <- df_tidy %>% 
+    gather(key = "Channel", value = "Purchases", Deal, Web, Catalog, Store)%>% group_by(RelationshipStatus, Channel)
+
+df_RelationshipStatus = aggregate(Purchases ~ Channel+RelationshipStatus, data = df_RelationshipStatus, mean)
+df_RelationshipStatus <- df_RelationshipStatus%>%
+    mutate(Percentage = Purchases/sum(Purchases)*100)
+
+df_RelationshipStatus %>% 
+  ggplot(aes(x=RelationshipStatus, y=Percentage, fill=Channel)) +
+  geom_col(position="stack", color="black", width=0.65, size=0.3) +
+  scale_fill_brewer(palette="Set3") +
+  labs(x="Relationship Status", y="Percentage", title="Percentage of Channel Usage for purchases based on Customer's Relationship Status") +
+  theme_classic()+geom_text(aes(label=paste(round(Percentage,2),"%")), position=position_stack(vjust=0.5), size=3, color="black")
+```
+
+
+# Customer Segmentation Methods - PCA and K Means Clustering
+
+```{r}
+drop <- c("age_group")
+data = data[,!(names(data) %in% drop)]
+```
+
+
+```{r}
+subset_data = subset(data,select = !names(data) %in% c("Education", "Dt_Customer","RelationshipStatus"))
+#Running a PCA.
+customers_copy_pca <- PCA(subset_data, graph = FALSE)
+
+#Exploring PCA()
+
+# Getting the summary of the pca
+summary(customers_copy_pca)
+
+#Getting the variance of the first 7 new dimensions
+customers_copy_pca$eig[,2][1:7]
+
+#Getting the cummulative variance
+customers_copy_pca$eig[,3][1:7]
+
+#Getting the most correlated variables
+dimdesc(customers_copy_pca, axes = 1:2)
+
+
+#Tracing variable contributions in customers_pca
+customers_copy_pca$var$contrib
+```
+```{r}
+#Creating a factor map for the variable contributions
+fviz_pca_var(customers_copy_pca, col.var = "contrib", gradient.cols = c("#002bbb", "#bb2e00"), repel = TRUE)
+```
+
+```{r}
+#Creating a factor map for the top 5 variables with the highest contributions.
+fviz_pca_var(customers_copy_pca, select.var = list(contrib = 5), repel = TRUE)
+```
+
+```{r}
+fviz_contrib(customers_copy_pca, choice = "var", axes = 1, top = 5)
+```
+
+```{r}
+fviz_nbclust(subset_data,kmeans,method="wss")+geom_vline(xintercept=3,linetype=2)
+```
+
+```{r}
+# Compute correlation matrix
+corr_data = subset(data,select = !names(data) %in% c("Education", "Dt_Customer","RelationshipStatus", "widow","Complain" , "Response", "Campaign", "Children", "Parent" ))
+
+cor_matrix <- cor(corr_data)
+
+highly_correlated_features <- findCorrelation(cor_matrix, cutoff = 0.70)
+
+corr_data <- corr_data[,-highly_correlated_features]
+
+```
+
+
+```{r}
+# Normalize the data
+scaled_corr_data <- scale(corr_data)
+```
+
+
+```{r}
+# Determine the optimal number of clusters using the elbow method
+wss <- c()
+for (i in 1:10) {
+  kmeans_model <- kmeans(scaled_corr_data, centers = i, nstart = 10)
+  wss[i] <- kmeans_model$tot.withinss
+}
+```
+
+```{r}
+plot(1:10, wss, type = "b", xlab = "Number of clusters", ylab = "Within-cluster sum of squares")
+```
+
+
+```{r}
+elbow_point <- fviz_nbclust(scaled_corr_data, kmeans, method = "wss") + geom_vline(xintercept = 3, linetype = "dashed")
+print(elbow_point)
+```
+
+
+```{r}
+set.seed(123)
+
+# Perform k-means clustering on the dataset
+kmeans_model <- kmeans(scaled_corr_data, centers = 3, nstart = 10)
+cluster_assignments <- kmeans_model$cluster
+```
+
+```{r}
+fviz_cluster(kmeans_model, scaled_corr_data, geom = "point",ellipse.type = "norm", repel = TRUE)
+```
+
+```{r}
+pca <- prcomp(scaled_corr_data, scale = TRUE)
+
+# Calculate variance explained by each principal component
+prop_var <- round(pca$sdev^2/sum(pca$sdev^2)*100, 1)
+
+# Plot variance explained by each principal component
+var_plot <- ggplot(data.frame(PC = 1:length(prop_var), prop_var), aes(x = PC, y = prop_var)) +
+  geom_bar(stat = "identity", fill = "blue", alpha = 0.5) +
+  labs(x = "Principal Component", y = "Variance Explained (%)") +
+  ggtitle("Scree Plot")
+print(var_plot)
+```
+
+
+```{r}
+
+# perform k-means clustering for a range of k values
+k_values <- 2:10
+ssd <- sapply(k_values, function(k) {
+  kmeans(pca$x, centers = k)$tot.withinss
+})
+
+# plot SSD values against k values
+plot(k_values, ssd, type = "b", pch = 19, frame = FALSE, xlab = "Number of clusters (k)", ylab = "Sum of squared distances (SSD)")
+
+```
+
+
+
+```{r}
+
+# identify elbow point
+fviz_nbclust(pca$x, kmeans, method = "wss", k.max = 10)+ geom_vline(xintercept = 3, linetype = "dashed") + theme_minimal()
+```
+
+
+```{r}
+# Choose the number of principal components
+num_pc <- 10
+
+# Extract the selected principal components
+pca_sel <- data.frame(pca$x)
+
+# Add the selected principal components to the original data
+data_pca <- cbind(scaled_corr_data, pca_sel)
+```
+
+```{r}
+set.seed(123)
+kmeans_pca <- kmeans(pca_sel, centers = 3, nstart = 25)
+
+# Add cluster labels to the original data
+data_pca_clustered <- cbind(data_pca, Cluster = kmeans_pca$cluster)
+
+# Visualize the clusters
+ggplot(data_pca_clustered, aes(x = PC1, y = PC2, color = factor(Cluster))) +
+  geom_point() +
+  labs(x = paste0("PC1 (", prop_var[1], "%)"), y = paste0("PC2 (", prop_var[2], "%)"), title = "PCA with K-means Clustering",  color = "Cluster Label" ) +
+  theme_bw()
+```
+
+
+
+```{r}
+vars <- c("Income", "Tenure", "Age", "Wines", "Fruits", "Meat", "Fish", "Sweets", "Gold", "WebVisits", "Web", "Deal", "Store")
+
+cluster_data = corr_data[ ,vars]
+```
+
+
+```{r}
+# Add cluster labels to the original data
+data_pca_clustered <- cbind(cluster_data, Cluster = kmeans_pca$cluster)
+```
+
+
+```{r fig.height=10}
+# plot boxplots for each variable, colored by cluster label
+ggplot(
+  melt(data_pca_clustered, id.vars = "Cluster"),
+  aes(
+    x = Cluster,
+    y = value,
+    group = Cluster,
+    fill = factor(Cluster)
+  )
+) +
+  geom_boxplot() + scale_fill_manual(values =  c("#E69F00", "#56B4E9", "#009E73")) +
+  facet_wrap( ~ variable, scales = "free_y") + theme_bw() +
+  labs(fill = "Cluster Label", title = "Boxplots of Variables by Cluster Label")
+```
+
+
+
+
+
+
+
+
+
+
+
+
